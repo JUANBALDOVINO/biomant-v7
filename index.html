@@ -1,0 +1,1780 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CMMS BioMant - Clínica de los Ríos</title>
+    <script>
+        // Guardia de sesión: sin token vigente se redirige al login antes de mostrar nada
+        (function () {
+            try {
+                const { token } = JSON.parse(localStorage.getItem('biomant_sesion'));
+                const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                if (payload.exp * 1000 > Date.now()) return;
+            } catch (e) {}
+            localStorage.removeItem('biomant_sesion');
+            document.documentElement.style.display = 'none';
+            const destino = `${location.pathname}${location.search}${location.hash}`;
+            location.replace(`/login?returnTo=${encodeURIComponent(destino)}`);
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        clinica: {
+                            50: '#f0f7f7',
+                            100: '#d9ecec',
+                            500: '#0d7377',
+                            600: '#0a5c5f',
+                            800: '#0f3d3e',
+                            900: '#0b2c2d'
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    <style>
+        /* Sidebar: oculto por defecto; la clase body.menu-abierto lo muestra */
+        #sidebar { transform: translateX(-100%); transition: transform .3s ease; }
+        #contenido { transition: padding-left .3s ease; }
+        #sidebar-overlay { opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+        body.menu-abierto #sidebar { transform: none; }
+        body.menu-abierto #sidebar-overlay { opacity: 1; pointer-events: auto; }
+        /* Evita animar el estado inicial al cargar la página */
+        body.sin-anim, body.sin-anim * { transition: none !important; }
+        @media (min-width: 768px) {
+            /* En escritorio el menú empuja el contenido; cerrado, el contenido ocupa todo el ancho */
+            body.menu-abierto #contenido { padding-left: 18rem; }
+            #sidebar-overlay { display: none; }
+        }
+        @media (max-width: 767px) { body.menu-abierto { overflow: hidden; } }
+        @media (prefers-reduced-motion: reduce) {
+            #sidebar, #contenido, #sidebar-overlay { transition: none; }
+        }
+    </style>
+</head>
+<body class="sin-anim min-h-screen bg-slate-50 text-slate-800 antialiased">
+    <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-slate-950/60" aria-hidden="true"></div>
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-clinica-900 text-white shadow-2xl">
+        <div class="flex h-20 items-center gap-3 border-b border-white/10 px-6">
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-clinica-500 text-lg font-black">B</span>
+            <div><p class="text-xl font-bold">BioMant</p><p class="text-xs text-teal-100/70">CMMS clínico</p></div>
+            <button id="btn-cerrar-sidebar" type="button" class="ml-auto rounded-lg p-2 text-slate-300 hover:bg-white/10 md:hidden" aria-label="Cerrar menú">×</button>
+        </div>
+        <nav class="flex-1 space-y-1 overflow-y-auto px-4 py-6" aria-label="Navegación principal">
+            <p class="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-100/50">Menú principal</p>
+            <a href="#dashboard" data-nav-link aria-current="page" class="flex items-center gap-3 rounded-xl bg-clinica-500 px-3 py-2.5 text-sm font-semibold text-white shadow-sm">Panel Principal</a>
+            <a href="#inventario" data-nav-link class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Inventario de Equipos</a>
+            <a href="#importar" data-nav-link data-admin-only class="hidden items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Importar Inventario</a>
+            <a href="#registro" data-nav-link data-admin-only class="hidden items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Registrar Equipo</a>
+            <a href="#mantenimiento" data-nav-link class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Registrar Mantenimiento</a>
+            <a href="#historial" data-nav-link class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Historial de Mantenimientos</a>
+            <a href="#usuarios" data-nav-link data-admin-only class="hidden items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white">Administración de Usuarios y Roles</a>
+        </nav>
+        <div class="border-t border-white/10 p-4">
+            <div class="mb-3 rounded-xl bg-white/5 p-3"><p id="usuario-nombre" class="truncate text-sm font-semibold text-white"></p><p id="usuario-rol" class="mt-1 text-xs text-teal-100/70"></p></div>
+            <button id="btn-cerrar-sesion" type="button" class="w-full rounded-xl px-3 py-2.5 text-left text-sm font-medium text-slate-300 hover:bg-rose-500/15 hover:text-rose-200">Cerrar sesión</button>
+        </div>
+    </aside>
+    <div id="contenido" class="min-h-screen">
+        <div class="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4">
+            <button id="btn-abrir-sidebar" type="button" class="rounded-lg p-2 text-slate-600 hover:bg-slate-100" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">☰</button>
+            <span id="titulo-vista" class="font-semibold text-clinica-900">Panel Principal</span>
+        </div>
+    <header data-vista="dashboard" class="bg-clinica-900 text-white shadow-lg">
+<div class="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8 md:flex-row md:items-center md:justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-teal-200">Inventario clínico</p>
+                <h1 class="mt-1 text-2xl font-bold md:text-3xl">CMMS BioMant - Clínica de los Ríos</h1>
+                <p class="mt-2 max-w-xl text-sm text-slate-300">Panel de equipos biomédicos y de tecnología. Datos en tiempo real desde la API local.</p>
+            </div>
+            <div id="resumen" class="grid grid-cols-3 gap-3 text-center">
+                <div class="rounded-xl bg-white/10 px-4 py-3 backdrop-blur">
+                    <p class="text-2xl font-bold" id="total-equipos">—</p>
+                    <p class="text-xs uppercase tracking-wide text-slate-300">Total</p>
+                </div>
+                <div class="rounded-xl bg-emerald-500/20 px-4 py-3">
+                    <p class="text-2xl font-bold text-emerald-200" id="total-operativos">—</p>
+                    <p class="text-xs uppercase tracking-wide text-slate-300">Operativos</p>
+                </div>
+                <div class="rounded-xl bg-amber-500/20 px-4 py-3">
+                    <p class="text-2xl font-bold text-amber-200" id="total-mantenimiento">—</p>
+                    <p class="text-xs uppercase tracking-wide text-slate-300">Mantenimiento</p>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-6 py-8">
+
+        <!-- Formulario para agregar nuevo equipo -->
+        <section data-vista="registro" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 class="text-lg font-semibold text-clinica-800 mb-4">Registrar Nuevo Equipo</h2>
+            <form id="form-nuevo-equipo" class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <input type="text" id="id_equipo" placeholder="ID (Ej. BIO-301)" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <input type="text" id="nombre_equipo" placeholder="Nombre del equipo" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <input type="text" id="marca" placeholder="Marca" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <input type="text" id="modelo" placeholder="Modelo" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <input type="text" id="numero_serie" placeholder="Número de serie" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <select id="nivel_riesgo" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <option value="">Nivel de Riesgo...</option>
+                    <option value="I">I (Bajo)</option>
+                    <option value="IIA">IIA (Moderado)</option>
+                    <option value="IIB">IIB (Alto)</option>
+                    <option value="III">III (Muy Alto)</option>
+                </select>
+                <input type="text" id="ubicacion" placeholder="Ubicación" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                <select id="estado" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <option value="Operativo">Operativo</option>
+                    <option value="En mantenimiento">En mantenimiento</option>
+                    <option value="Fuera de servicio">Fuera de servicio</option>
+                </select>
+                <select id="tipo_categoria" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <option value="Biomédico">Biomédico</option>
+                    <option value="Tecnología">Tecnología</option>
+                </select>
+                <div data-admin-only class="hidden">
+                    <label for="proximo_mto_preventivo" class="mb-1.5 block text-sm font-medium text-slate-700">Próximo mantenimiento preventivo (opcional)</label>
+                    <input id="proximo_mto_preventivo" type="date" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                </div>
+                <div class="md:col-span-3 flex justify-end mt-2">
+                    <button type="submit" class="rounded-xl bg-clinica-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-500">
+                        Guardar Equipo
+                    </button>
+                </div>
+            </form>
+        </section>
+        
+        <section data-vista="inventario" class="mb-6 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:flex-wrap md:items-center md:justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-clinica-800">Inventario de equipos</h2>
+                <p id="estado-carga" class="text-sm text-slate-500">Cargando inventario…</p>
+            </div>
+            <div class="flex w-full flex-col gap-3 sm:flex-row md:w-auto">
+                <label class="relative flex-1 md:w-80">
+                    <span class="sr-only">Buscar equipos</span>
+                    <input
+                        id="busqueda"
+                        type="search"
+                        placeholder="Buscar por ID, nombre, marca, ubicación…"
+                        class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm outline-none ring-clinica-500 transition focus:border-clinica-500 focus:bg-white focus:ring-2"
+                    >
+                    <svg class="pointer-events-none absolute left-3 top-2.5 h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+                    </svg>
+                </label>
+                <button
+                    id="btn-actualizar"
+                    type="button"
+                    class="rounded-xl bg-clinica-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-500"
+                >
+                    Actualizar
+                </button>
+                <button id="btn-solo-alertas" type="button" aria-pressed="false" class="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800 hover:bg-amber-100">
+                    Solo alertas preventivas
+                </button>
+            </div>
+            <div class="grid w-full grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3">
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Estado
+                    <select id="filtro-estado" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700"><option value="">Todos los estados</option><option>Operativo</option><option>En mantenimiento</option><option>Fuera de servicio</option></select>
+                </label>
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Departamento / ubicación
+                    <select id="filtro-ubicacion" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700"><option value="">Todas las ubicaciones</option></select>
+                </label>
+                <label class="text-xs font-semibold uppercase tracking-wide text-slate-500">Criticidad
+                    <select id="filtro-riesgo" class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case text-slate-700"><option value="">Todos los niveles</option><option value="I">I · Bajo</option><option value="IIA">IIA · Moderado</option><option value="IIB">IIB · Alto</option><option value="III">III · Muy alto</option></select>
+                </label>
+            </div>
+            <div class="flex w-full flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                <p id="info-export-inventario" class="text-sm text-slate-500">Reporte con los equipos filtrados en pantalla.</p>
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" data-exportar="pdf" data-reporte="inventario" class="inline-flex items-center gap-2 rounded-xl bg-clinica-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clinica-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"><svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>Exportar PDF</button>
+                    <button type="button" data-exportar="excel" data-reporte="inventario" class="inline-flex items-center gap-2 rounded-xl border border-clinica-600 bg-white px-4 py-2.5 text-sm font-semibold text-clinica-600 transition hover:bg-clinica-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clinica-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"><svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M10 3v18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>Exportar Excel</button>
+                </div>
+                <p id="msg-export-inventario" role="status" class="hidden w-full"></p>
+            </div>
+        </section>
+
+        <section data-vista="inventario" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr>
+                            <th class="px-4 py-3 font-semibold">ID</th>
+                            <th class="px-4 py-3 font-semibold">Nombre</th>
+                            <th class="px-4 py-3 font-semibold">Marca</th>
+                            <th class="px-4 py-3 font-semibold">Modelo</th>
+                            <th class="px-4 py-3 font-semibold">Ubicación</th>
+                            <th class="px-4 py-3 font-semibold">Estado</th>
+                            <th class="px-4 py-3 font-semibold">Categoría</th>
+                            <th class="px-4 py-3 font-semibold">Mantenimiento preventivo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-equipos" class="divide-y divide-slate-100">
+                    </tbody>
+                </table>
+            </div>
+            <p id="sin-resultados" class="hidden px-4 py-10 text-center text-sm text-slate-500">No hay equipos que coincidan con la búsqueda.</p>
+        </section>
+
+        <section data-vista="importar" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 class="text-lg font-semibold text-clinica-800">Importación masiva de inventario</h2>
+            <p class="mb-4 text-sm text-slate-500">Carga Excel (.xlsx) o PDF con texto seleccionable. Los equipos con ID ya existente se omiten.</p>
+            <div class="mb-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
+                <p class="font-semibold">Columnas requeridas</p>
+                <p class="mt-1">id_equipo, nombre_equipo, marca, modelo, numero_serie, nivel_riesgo, ubicacion, estado, tipo_categoria.</p>
+                <p class="mt-1">Opcionales: proximo_mto_preventivo (AAAA-MM-DD), foto_equipo. Para PDF, usa una tabla con columnas separadas por |, tabulador, punto y coma o espacios múltiples.</p>
+            </div>
+            <form id="form-importar-inventario" class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <input id="archivo-inventario" type="file" accept=".xlsx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required class="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <button id="btn-importar-inventario" type="submit" class="rounded-xl bg-clinica-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-clinica-500">Importar archivo</button>
+            </form>
+            <p id="msg-importar-inventario" role="status" class="mt-3 hidden text-sm"></p>
+            <ul id="errores-importacion" class="mt-2 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-xs text-rose-700"></ul>
+        </section>
+
+        <!-- Vista: Panel principal -->
+        <section data-vista="dashboard" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div class="border-b border-slate-100 px-5 py-4">
+                <h2 class="text-lg font-semibold text-clinica-800">Equipos que requieren atención</h2>
+                <p id="conteo-atencion" class="text-sm text-slate-500">Cargando…</p>
+            </div>
+            <ul id="lista-atencion" class="divide-y divide-slate-100 px-5"></ul>
+        </section>
+
+        <section data-vista="dashboard" class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 class="text-lg font-semibold text-clinica-800">Distribución por estado</h2>
+                <p class="mb-4 text-sm text-slate-500">Cantidad de equipos en cada estado actual.</p>
+                <div class="relative mx-auto h-72 max-w-lg"><canvas id="grafica-estados" aria-label="Gráfica de equipos por estado"></canvas></div>
+            </article>
+            <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 class="text-lg font-semibold text-clinica-800">Mantenimientos registrados</h2>
+                <p class="mb-4 text-sm text-slate-500">Comparación de preventivos y correctivos.</p>
+                <div class="relative h-72"><canvas id="grafica-mantenimientos" aria-label="Gráfica de mantenimientos preventivos y correctivos"></canvas></div>
+            </article>
+            <p id="msg-graficas" role="status" class="hidden text-sm text-rose-700 lg:col-span-2"></p>
+        </section>
+
+        <!-- Vista: Registrar mantenimiento -->
+        <section data-vista="mantenimiento" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 class="text-lg font-semibold text-clinica-800">Registrar mantenimiento</h2>
+            <p class="mb-4 text-sm text-slate-500">Queda guardado en la base de datos y aparece de inmediato en el historial.</p>
+            <form id="form-mantenimiento" class="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div class="md:col-span-2">
+                    <label for="m_equipo" class="mb-1.5 block text-sm font-medium text-slate-700">Equipo</label>
+                    <input id="m_equipo" list="lista-equipos" type="text" placeholder="Escribe el ID o elige de la lista (ej. BIO-001)" required autocomplete="off" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <datalist id="lista-equipos"></datalist>
+                </div>
+                <div>
+                    <label for="m_fecha" class="mb-1.5 block text-sm font-medium text-slate-700">Fecha de la intervención</label>
+                    <input id="m_fecha" type="date" required class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                </div>
+                <div>
+                    <label for="m_tipo" class="mb-1.5 block text-sm font-medium text-slate-700">Tipo</label>
+                    <select id="m_tipo" required class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                        <option value="Preventivo">Preventivo</option>
+                        <option value="Correctivo">Correctivo</option>
+                    </select>
+                </div>
+                <div class="md:col-span-3">
+                    <label for="m_detalle" class="mb-1.5 block text-sm font-medium text-slate-700">Especificaciones de la intervención</label>
+                    <textarea id="m_detalle" rows="5" minlength="10" maxlength="2000" required placeholder="Actividades realizadas, repuestos usados, hallazgos y resultado de la prueba funcional…" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500 resize-y"></textarea>
+                </div>
+                <div class="flex items-center justify-between gap-4 md:col-span-3">
+                    <p id="msg-mantenimiento" role="status" class="text-sm text-slate-600"></p>
+                    <button id="btn-guardar-mantenimiento" type="submit" class="rounded-xl bg-clinica-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-500 disabled:opacity-60">Guardar mantenimiento</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Vista: Historial de mantenimientos -->
+        <section data-vista="historial" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div class="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-lg font-semibold text-clinica-800">Historial de mantenimientos</h2>
+                    <p id="nota-historial" class="text-sm text-slate-500">Cargando…</p>
+                </div>
+                <div class="flex w-full gap-3 md:w-auto">
+                    <input id="busqueda-historial" type="search" aria-label="Buscar en el historial" placeholder="Buscar por equipo, tipo o detalle…" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500 md:w-72">
+                    <a href="#mantenimiento" class="whitespace-nowrap rounded-xl bg-clinica-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-500">Registrar</a>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-5 py-3">
+                <div class="flex flex-wrap items-center gap-3">
+                    <label for="periodo-historial" class="text-sm font-medium text-slate-600">Período</label>
+                    <select id="periodo-historial" class="rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm text-slate-700 outline-none ring-clinica-500 focus:border-clinica-500 focus:ring-2">
+                        <option value="todos">Todos</option>
+                        <option value="semanal">Semanal (últimos 7 días)</option>
+                        <option value="mensual">Mensual (últimos 30 días)</option>
+                        <option value="anual">Anual (últimos 365 días)</option>
+                    </select>
+                    <p id="info-export-historial" class="text-sm text-slate-500"></p>
+                </div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <button type="button" data-exportar="pdf" data-reporte="historial" class="inline-flex items-center gap-2 rounded-xl bg-clinica-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clinica-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"><svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>Exportar PDF</button>
+                    <button type="button" data-exportar="excel" data-reporte="historial" class="inline-flex items-center gap-2 rounded-xl border border-clinica-600 bg-white px-4 py-2.5 text-sm font-semibold text-clinica-600 transition hover:bg-clinica-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clinica-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"><svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M10 3v18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>Exportar Excel</button>
+                </div>
+                <p id="msg-export-historial" role="status" class="hidden w-full"></p>
+            </div>
+            <p id="msg-historial" role="status" class="hidden px-5 py-2 text-sm"></p>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr><th class="px-4 py-3 font-semibold">Fecha</th><th class="px-4 py-3 font-semibold">Equipo</th><th class="px-4 py-3 font-semibold">Tipo</th><th class="px-4 py-3 font-semibold">Detalle</th><th class="px-4 py-3 font-semibold">Registrado por</th></tr>
+                    </thead>
+                    <tbody id="tabla-historial" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Vista: Usuarios y roles (solo Administrador) -->
+        <div data-vista="usuarios" class="space-y-6">
+            <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 class="mb-4 text-lg font-semibold text-clinica-800">Registrar usuario</h2>
+                <form id="form-nuevo-usuario" class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <input id="u_nombre" type="text" placeholder="Nombre completo" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <input id="u_correo" type="email" placeholder="Correo" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <input id="u_password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" minlength="8" required autocomplete="new-password" class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                    <select id="u_rol" required class="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500">
+                        <option value="Tecnico">Técnico</option>
+                        <option value="Administrador">Administrador</option>
+                    </select>
+                    <div class="flex items-center justify-between gap-4 md:col-span-2">
+                        <p id="msg-usuario" role="status" class="text-sm text-slate-600"></p>
+                        <button type="submit" class="rounded-xl bg-clinica-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-clinica-500">Guardar usuario</button>
+                    </div>
+                </form>
+            </section>
+            <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <table class="min-w-full text-left text-sm">
+                    <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr><th class="px-4 py-3 font-semibold">Nombre</th><th class="px-4 py-3 font-semibold">Correo</th><th class="px-4 py-3 font-semibold">Rol</th><th class="px-4 py-3 font-semibold">Acciones</th></tr>
+                    </thead>
+                    <tbody id="tabla-usuarios" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+    </div>
+
+    <!-- Modal de Detalles del Equipo -->
+    <div id="modal-detalle" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm transition-opacity">
+        <div class="relative w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <!-- Cabecera del Modal -->
+            <div class="flex items-center justify-between bg-clinica-900 px-6 py-4 text-white">
+                <div>
+                    <span id="modal-categoria-badge" class="inline-block rounded-md bg-teal-500/30 px-2 py-0.5 text-xs font-medium text-teal-200">Categoría</span>
+                    <h3 id="modal-nombre" class="text-xl font-bold">Nombre del Equipo</h3>
+                    <p id="modal-id" class="text-xs text-slate-300">ID: ---</p>
+                </div>
+                <button id="btn-cerrar-modal" type="button" class="rounded-lg p-1.5 text-slate-300 hover:bg-white/10 hover:text-white">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Cuerpo del Modal -->
+            <div class="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+                <!-- Información General -->
+                <div class="grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Marca</p>
+                        <p id="modal-marca" class="font-medium text-slate-800">—</p>
+                    </div>
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Modelo</p>
+                        <p id="modal-modelo" class="font-medium text-slate-800">—</p>
+                    </div>
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Número de Serie</p>
+                        <p id="modal-serie" class="font-medium text-slate-800">—</p>
+                    </div>
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Ubicación</p>
+                        <p id="modal-ubicacion" class="font-medium text-slate-800">—</p>
+                    </div>
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Nivel de Riesgo</p>
+                        <p id="modal-riesgo" class="font-medium text-slate-800">—</p>
+                    </div>
+                    <div class="rounded-xl bg-slate-50 p-3 border border-slate-100">
+                        <p class="text-xs text-slate-500 uppercase font-semibold">Estado Actual</p>
+                        <span id="modal-estado-badge" class="mt-1 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset">
+                            —
+                        </span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center">
+                    <button id="btn-ampliar-foto-equipo" type="button" class="hidden shrink-0 cursor-zoom-in" aria-label="Ampliar fotografía del equipo"><img id="modal-foto-equipo" alt="Fotografía del equipo" class="h-36 w-36 rounded-xl border border-slate-200 object-cover"></button>
+                    <p id="modal-foto-vacia" class="text-sm text-slate-500">Este equipo aún no tiene fotografía.</p>
+                    <div data-admin-only class="hidden flex-1">
+                        <label for="input-imagen-equipo" class="text-xs font-bold uppercase tracking-wider text-clinica-800">Actualizar fotografía</label>
+                        <input id="input-imagen-equipo" type="file" accept="image/jpeg,image/png,image/webp" class="mt-2 block w-full text-sm text-slate-600">
+                        <button id="btn-subir-imagen-equipo" type="button" class="mt-2 rounded-lg bg-clinica-600 px-3 py-2 text-xs font-semibold text-white">Subir imagen (máx. 5 MB)</button>
+                    </div>
+                    <div class="sm:ml-auto sm:text-center">
+                        <button id="btn-generar-qr" type="button" class="rounded-lg border border-clinica-600 px-3 py-2 text-xs font-semibold text-clinica-600 hover:bg-clinica-50">Ver código QR</button>
+                        <a id="link-ficha-qr" href="#" target="_blank" rel="noopener" class="mt-2 hidden text-xs text-clinica-600 underline">Abrir ficha</a>
+                        <img id="modal-qr-equipo" alt="Código QR de la ficha del equipo" class="mx-auto mt-2 hidden h-32 w-32">
+                    </div>
+                </div>
+
+                <!-- Cambio de estado (las opciones dependen del rol) -->
+                <section data-admin-only class="hidden rounded-xl border border-slate-200 p-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div><h4 class="text-sm font-semibold text-slate-800">Datos del equipo</h4><p class="text-xs text-slate-500">Actualiza la información o elimina este registro.</p></div>
+                        <div class="flex gap-2"><button id="btn-editar-equipo" type="button" class="rounded-lg bg-clinica-600 px-3 py-2 text-xs font-semibold text-white hover:bg-clinica-500">Editar datos</button><button id="btn-eliminar-equipo" type="button" class="rounded-lg border border-rose-300 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50">Eliminar equipo</button></div>
+                    </div>
+                    <form id="form-editar-equipo" class="mt-4 hidden grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-xs font-semibold text-slate-600">Nombre<input name="nombre_equipo" required maxlength="255" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <label class="text-xs font-semibold text-slate-600">Marca<input name="marca" required maxlength="100" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <label class="text-xs font-semibold text-slate-600">Modelo<input name="modelo" required maxlength="100" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <label class="text-xs font-semibold text-slate-600">Número de serie<input name="numero_serie" required maxlength="100" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <label class="text-xs font-semibold text-slate-600">Ubicación<input name="ubicacion" required maxlength="150" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <label class="text-xs font-semibold text-slate-600">Nivel de riesgo<select name="nivel_riesgo" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option>I</option><option>IIA</option><option>IIB</option><option>III</option></select></label>
+                        <label class="text-xs font-semibold text-slate-600">Estado<select name="estado" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option>Operativo</option><option>En mantenimiento</option><option>Fuera de servicio</option></select></label>
+                        <label class="text-xs font-semibold text-slate-600">Categoría<select name="tipo_categoria" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option>Biomédico</option><option>Tecnología</option></select></label>
+                        <label class="text-xs font-semibold text-slate-600 sm:col-span-2">Próximo mantenimiento preventivo<input name="proximo_mto_preventivo" type="date" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                        <div class="sm:col-span-2 flex justify-end gap-2"><button id="btn-cancelar-edicion-equipo" type="button" class="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700">Cancelar</button><button type="submit" class="rounded-lg bg-clinica-600 px-3 py-2 text-xs font-semibold text-white">Guardar cambios</button></div>
+                    </form>
+                    <p id="editar-equipo-msg" role="status" class="mt-2 text-xs"></p>
+                </section>
+
+                <div class="rounded-xl border border-slate-200 p-4">
+                    <label for="modal-estado-select" class="text-xs font-bold uppercase tracking-wider text-clinica-800">Cambiar estado</label>
+                    <div class="mt-2 flex flex-col gap-3 sm:flex-row">
+                        <select id="modal-estado-select" class="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-sm outline-none focus:border-clinica-500 focus:bg-white focus:ring-2 ring-clinica-500 sm:flex-1"></select>
+                        <button id="btn-guardar-estado" type="button" class="rounded-xl bg-clinica-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-clinica-500 disabled:cursor-not-allowed disabled:opacity-50">Guardar estado</button>
+                    </div>
+                    <p id="modal-estado-msg" role="status" class="mt-2 text-xs text-slate-500"></p>
+                </div>
+
+                <div class="rounded-xl border border-slate-200 p-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <div class="flex-1">
+                            <label for="modal-proximo-preventivo" class="text-xs font-bold uppercase tracking-wider text-clinica-800">Próximo mantenimiento preventivo</label>
+                            <input id="modal-proximo-preventivo" type="date" class="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                        </div>
+                        <button id="btn-guardar-proximo-preventivo" type="button" class="hidden rounded-xl bg-clinica-600 px-4 py-2 text-sm font-semibold text-white hover:bg-clinica-500">Guardar fecha</button>
+                    </div>
+                    <p id="modal-proximo-msg" role="status" class="mt-2 text-xs text-slate-500"></p>
+                </div>
+
+                <!-- Historial de Mantenimiento / Hoja de Vida -->
+                <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-clinica-800 mb-2">Historial de Mantenimiento / Hoja de Vida</h4>
+                    <ul id="modal-hoja-vida" class="space-y-2 text-xs text-slate-600"></ul>
+                </div>
+            </div>
+
+            <!-- Pie del Modal -->
+            <div class="bg-slate-50 px-6 py-3 flex items-center justify-between gap-3 border-t border-slate-100">
+                <button id="btn-mto-desde-modal" type="button" class="rounded-xl px-4 py-2 text-sm font-semibold text-clinica-600 hover:bg-clinica-100 transition">Registrar mantenimiento</button>
+                <button id="btn-cerrar-modal-footer" type="button" class="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300 transition">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-foto-ampliada" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/90 p-4" role="dialog" aria-modal="true" aria-label="Fotografía ampliada">
+        <button id="btn-cerrar-foto-ampliada" type="button" class="absolute right-4 top-4 rounded-full bg-white/15 px-4 py-2 text-2xl text-white hover:bg-white/25" aria-label="Cerrar fotografía">&times;</button>
+        <img id="foto-ampliada" alt="Fotografía ampliada del equipo" class="max-h-[90vh] max-w-[95vw] rounded-lg object-contain shadow-2xl">
+    </div>
+
+    <div id="modal-detalle-mantenimiento" class="fixed inset-0 z-[60] hidden items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="mantenimiento-ficha-titulo">
+        <section class="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header class="flex items-center justify-between bg-clinica-900 px-5 py-4 text-white"><div><p id="mantenimiento-ficha-tipo" class="text-xs font-semibold uppercase tracking-wide text-teal-200"></p><h2 id="mantenimiento-ficha-titulo" class="text-lg font-bold">Detalle del mantenimiento</h2></div><button id="btn-cerrar-ficha-mantenimiento" type="button" class="rounded-lg px-3 py-1 text-2xl text-slate-200 hover:bg-white/10" aria-label="Cerrar">&times;</button></header>
+            <div class="space-y-4 p-5">
+                <div id="mantenimiento-ficha-datos" class="space-y-3 text-sm"></div>
+                <button id="btn-ver-ficha-equipo-desde-mantenimiento" type="button" class="rounded-lg border border-clinica-600 px-3 py-2 text-sm font-semibold text-clinica-700 hover:bg-clinica-50">Ver ficha del equipo</button>
+                <form id="form-editar-mantenimiento-ficha" class="hidden space-y-3">
+                    <label class="block text-xs font-semibold text-slate-600">Fecha<input id="ficha-mto-fecha" type="date" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></label>
+                    <label class="block text-xs font-semibold text-slate-600">Equipo<select id="ficha-mto-equipo" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></select></label>
+                    <label class="block text-xs font-semibold text-slate-600">Tipo<select id="ficha-mto-tipo" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"><option>Preventivo</option><option>Correctivo</option></select></label>
+                    <label class="block text-xs font-semibold text-slate-600">Detalle<textarea id="ficha-mto-detalle" rows="4" minlength="10" maxlength="2000" required class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea></label>
+                    <p id="ficha-mto-msg" role="status" class="text-xs text-rose-700"></p>
+                    <div class="flex justify-end gap-2"><button id="btn-cancelar-editar-mantenimiento" type="button" class="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">Cancelar</button><button type="submit" class="rounded-lg bg-clinica-600 px-3 py-2 text-sm font-semibold text-white">Guardar cambios</button></div>
+                </form>
+                <div id="acciones-ficha-mantenimiento" class="flex justify-end gap-2 border-t border-slate-100 pt-4"><button id="btn-editar-mantenimiento-ficha" type="button" class="rounded-lg bg-clinica-600 px-3 py-2 text-sm font-semibold text-white">Editar</button><button id="btn-eliminar-mantenimiento-ficha" type="button" class="rounded-lg border border-rose-300 px-3 py-2 text-sm font-semibold text-rose-700">Eliminar</button></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const API_URL = '/api/equipos';
+        const SESION_KEY = 'biomant_sesion';
+        let equipos = [];
+        let soloAlertasPreventivas = false;
+        let graficaEstados = null;
+        let graficaMantenimientos = null;
+        let resumenEstadosDB = [];
+        let fichaQRAbierta = false;
+
+        // --- SESIÓN ---
+        const sesion = JSON.parse(localStorage.getItem(SESION_KEY) || 'null');
+        const usuario = sesion ? sesion.usuario : {};
+        const esAdmin = (usuario.rol === 'Administrador');
+
+        function cerrarSesion() {
+            localStorage.removeItem(SESION_KEY);
+            location.replace('/login');
+        }
+
+        // fetch que adjunta el token; si el servidor responde 401, la sesión terminó
+        async function fetchAuth(url, opciones = {}) {
+            const respuesta = await fetch(url, {
+                ...opciones,
+                headers: { ...(opciones.headers || {}), Authorization: `Bearer ${sesion ? sesion.token : ''}` }
+            });
+            if (respuesta.status === 401) {
+                cerrarSesion();
+                throw new Error('Sesión vencida');
+            }
+            return respuesta;
+        }
+
+        function pintarUsuario() {
+            document.getElementById('usuario-nombre').textContent = usuario.nombre || 'Usuario';
+            document.getElementById('usuario-rol').textContent = esAdmin ? 'Administrador' : 'Técnico';
+            document.querySelectorAll('[data-admin-only]').forEach((enlace) => {
+                enlace.classList.toggle('hidden', !esAdmin);
+                enlace.classList.toggle('flex', esAdmin);
+            });
+        }
+
+        document.getElementById('btn-cerrar-sesion').addEventListener('click', cerrarSesion);
+
+        // --- SIDEBAR: un solo estado (body.menu-abierto) ---
+        const sidebar = document.getElementById('sidebar');
+        const btnAbrirSidebar = document.getElementById('btn-abrir-sidebar');
+        const esEscritorio = window.matchMedia('(min-width: 768px)');
+
+        function alternarSidebar(abierto = !document.body.classList.contains('menu-abierto')) {
+            document.body.classList.toggle('menu-abierto', abierto);
+            sidebar.inert = !abierto; // cerrado: sus enlaces no reciben foco con Tab
+            btnAbrirSidebar.setAttribute('aria-expanded', String(abierto));
+            btnAbrirSidebar.setAttribute('aria-label', abierto ? 'Cerrar menú' : 'Abrir menú');
+        }
+
+        btnAbrirSidebar.addEventListener('click', () => alternarSidebar());
+        document.getElementById('btn-cerrar-sidebar').addEventListener('click', () => alternarSidebar(false));
+        document.getElementById('sidebar-overlay').addEventListener('click', () => alternarSidebar(false));
+        document.querySelectorAll('[data-nav-link]').forEach((enlace) => {
+            // En móvil el menú se cierra al elegir una vista; en escritorio se queda como esté
+            enlace.addEventListener('click', () => { if (!esEscritorio.matches) alternarSidebar(false); });
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !esEscritorio.matches) alternarSidebar(false);
+        });
+        // Al cruzar el breakpoint: abierto en escritorio, cerrado en móvil
+        esEscritorio.addEventListener('change', (e) => alternarSidebar(e.matches));
+
+        // --- VISTAS: solo una visible a la vez, según location.hash ---
+        const VISTAS = {
+            dashboard:  { titulo: 'Panel Principal',                    soloAdmin: false },
+            inventario: { titulo: 'Inventario de Equipos',              soloAdmin: false },
+            importar:   { titulo: 'Importación masiva de inventario',    soloAdmin: true },
+            registro:   { titulo: 'Registrar Equipo',                   soloAdmin: true },
+            mantenimiento: { titulo: 'Registrar Mantenimiento',         soloAdmin: false },
+            historial:  { titulo: 'Historial de Mantenimientos',        soloAdmin: false },
+            usuarios:   { titulo: 'Administración de Usuarios y Roles', soloAdmin: true }
+        };
+        const NAV_ACTIVO = ['bg-clinica-500', 'text-white', 'shadow-sm', 'font-semibold'];
+        const NAV_INACTIVO = ['text-slate-300', 'font-medium', 'hover:bg-white/10', 'hover:text-white'];
+
+        function resolverVista() {
+            const pedida = location.hash.slice(1);
+            const vista = VISTAS[pedida];
+            if (!vista || (vista.soloAdmin && !esAdmin)) {
+                if (pedida) history.replaceState(null, '', '#dashboard');
+                return 'dashboard';
+            }
+            return pedida;
+        }
+
+        function mostrarVista() {
+            const vista = resolverVista();
+            document.querySelectorAll('[data-vista]').forEach((el) => {
+                el.classList.toggle('hidden', el.dataset.vista !== vista);
+            });
+            document.querySelectorAll('[data-nav-link]').forEach((enlace) => {
+                const activo = enlace.getAttribute('href') === `#${vista}`;
+                NAV_ACTIVO.forEach((c) => enlace.classList.toggle(c, activo));
+                NAV_INACTIVO.forEach((c) => enlace.classList.toggle(c, !activo));
+                if (activo) enlace.setAttribute('aria-current', 'page'); else enlace.removeAttribute('aria-current');
+            });
+            document.getElementById('titulo-vista').textContent = VISTAS[vista].titulo;
+            if (vista === 'usuarios') cargarUsuarios();
+            window.scrollTo(0, 0);
+            if (vista === 'historial') resaltarFilaNueva();
+        }
+
+        window.addEventListener('hashchange', mostrarVista);
+
+        const tabla = document.getElementById('tabla-equipos');
+        const busqueda = document.getElementById('busqueda');
+        const estadoCarga = document.getElementById('estado-carga');
+        const sinResultados = document.getElementById('sin-resultados');
+        const modal = document.getElementById('modal-detalle'); // Seleccionamos el modal
+
+        function escapeHtml(texto) {
+            return String(texto ?? '').replace(/[&<>"']/g, (caracter) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[caracter]));
+        }
+
+        function normalizar(texto) {
+            return String(texto || '').toLowerCase().trim();
+        }
+
+        function claseEstado(estado) {
+            const valor = normalizar(estado);
+            if (valor.includes('operativ')) {
+                return 'bg-emerald-100 text-emerald-800 ring-emerald-200';
+            }
+            if (valor.includes('manten')) {
+                return 'bg-amber-100 text-amber-800 ring-amber-200';
+            }
+            if (valor.includes('fuera') || valor.includes('inactiv') || valor.includes('baja')) {
+                return 'bg-rose-100 text-rose-800 ring-rose-200';
+            }
+            return 'bg-slate-100 text-slate-700 ring-slate-200';
+        }
+
+        function actualizarResumen(lista) {
+            const total = lista.length;
+            const operativos = lista.filter((equipo) => normalizar(equipo.estado).includes('operativ')).length;
+            const mantenimiento = lista.filter((equipo) => normalizar(equipo.estado).includes('manten')).length;
+
+            document.getElementById('total-equipos').textContent = total;
+            document.getElementById('total-operativos').textContent = operativos;
+            document.getElementById('total-mantenimiento').textContent = mantenimiento;
+        }
+
+        function estiloAlertaPreventiva(estado) {
+            if (estado === 'Vencido') return 'bg-rose-100 text-rose-800 ring-rose-200';
+            if (estado === 'Próximo') return 'bg-amber-100 text-amber-800 ring-amber-200';
+            if (estado === 'Al día') return 'bg-emerald-100 text-emerald-800 ring-emerald-200';
+            return 'bg-slate-100 text-slate-600 ring-slate-200';
+        }
+
+        function textoAlertaPreventiva(equipo) {
+            const estado = equipo.estado_mantenimiento_preventivo || 'Sin programar';
+            if (estado === 'Vencido') return `Vencido · ${equipo.fecha_proximo_mto_preventivo}`;
+            if (estado === 'Próximo') return `Próximo · ${equipo.fecha_proximo_mto_preventivo} (${equipo.dias_hasta_preventivo} d)`;
+            if (estado === 'Al día') return `Al día · ${equipo.fecha_proximo_mto_preventivo}`;
+            return 'Sin programar';
+        }
+
+        // --- NUEVA FUNCIÓN RENDERIZARTABLA ---
+        function renderizarTabla(lista) {
+            tabla.innerHTML = '';
+            sinResultados.classList.toggle('hidden', lista.length > 0);
+
+            lista.forEach((equipo) => {
+                const fila = document.createElement('tr');
+                fila.className = 'hover:bg-clinica-50/70 cursor-pointer transition-colors'; // Añadido cursor-pointer
+                fila.title = 'Haz clic para ver la ficha detallada'; // Tooltip
+                fila.innerHTML = `
+                    <td class="whitespace-nowrap px-4 py-3 font-medium text-clinica-800">${escapeHtml(equipo.id_equipo)}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900">${escapeHtml(equipo.nombre_equipo)}</td>
+                    <td class="px-4 py-3">${escapeHtml(equipo.marca)}</td>
+                    <td class="px-4 py-3">${escapeHtml(equipo.modelo)}</td>
+                    <td class="px-4 py-3">${escapeHtml(equipo.ubicacion)}</td>
+                    <td class="px-4 py-3">
+                        <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${claseEstado(equipo.estado)}">
+                            ${escapeHtml(equipo.estado || 'Sin estado')}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3">${escapeHtml(equipo.tipo_categoria)}</td>
+                    <td class="whitespace-nowrap px-4 py-3"><span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${estiloAlertaPreventiva(equipo.estado_mantenimiento_preventivo)}">${escapeHtml(textoAlertaPreventiva(equipo))}</span></td>
+                `;
+
+                // Evento click en la fila para abrir el modal
+                fila.addEventListener('click', () => abrirModalDetalle(equipo));
+                
+                tabla.appendChild(fila);
+            });
+        }
+
+        // --- FUNCIONES DEL MODAL ---
+        function abrirModalDetalle(equipo) {
+            document.getElementById('modal-nombre').textContent = equipo.nombre_equipo || 'Sin nombre';
+            document.getElementById('modal-id').textContent = `ID: ${equipo.id_equipo || 'N/A'}`;
+            document.getElementById('modal-categoria-badge').textContent = equipo.tipo_categoria || 'General';
+            document.getElementById('modal-marca').textContent = equipo.marca || 'N/A';
+            document.getElementById('modal-modelo').textContent = equipo.modelo || 'N/A';
+            document.getElementById('modal-serie').textContent = equipo.numero_serie || 'N/A';
+            document.getElementById('modal-ubicacion').textContent = equipo.ubicacion || 'N/A';
+            document.getElementById('modal-riesgo').textContent = equipo.nivel_riesgo || 'N/A';
+
+            const badgeEstado = document.getElementById('modal-estado-badge');
+            badgeEstado.textContent = equipo.estado || 'Sin estado';
+            badgeEstado.className = `mt-1 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${claseEstado(equipo.estado)}`;
+
+            equipoModalId = equipo.id_equipo;
+            const foto = document.getElementById('modal-foto-equipo');
+            const fotoVacia = document.getElementById('modal-foto-vacia');
+            const botonFoto = document.getElementById('btn-ampliar-foto-equipo');
+            foto.src = equipo.foto_equipo || '';
+            botonFoto.classList.toggle('hidden', !equipo.foto_equipo);
+            fotoVacia.classList.toggle('hidden', Boolean(equipo.foto_equipo));
+            foto.onerror = () => { botonFoto.classList.add('hidden'); fotoVacia.classList.remove('hidden'); };
+            document.getElementById('form-editar-equipo').classList.add('hidden');
+            document.getElementById('editar-equipo-msg').textContent = '';
+            document.getElementById('modal-qr-equipo').classList.add('hidden');
+            document.getElementById('link-ficha-qr').classList.add('hidden');
+            const inputProximo = document.getElementById('modal-proximo-preventivo');
+            inputProximo.value = equipo.fecha_proximo_mto_preventivo || '';
+            inputProximo.disabled = !esAdmin;
+            document.getElementById('btn-guardar-proximo-preventivo').classList.toggle('hidden', !esAdmin);
+            document.getElementById('modal-proximo-msg').textContent = `${textoAlertaPreventiva(equipo)}${equipo.dias_hasta_preventivo != null ? ` · ${equipo.dias_hasta_preventivo} días respecto a hoy` : ''}`;
+            prepararCambioEstado(equipo);
+            renderizarHojaVida(equipo.id_equipo);
+            modal.classList.remove('hidden');
+        }
+
+        function cerrarModalDetalle() {
+            modal.classList.add('hidden');
+        }
+
+        // Eventos para cerrar el modal
+        document.getElementById('btn-cerrar-modal').addEventListener('click', cerrarModalDetalle);
+        document.getElementById('btn-cerrar-modal-footer').addEventListener('click', cerrarModalDetalle);
+        const modalFotoAmpliada = document.getElementById('modal-foto-ampliada');
+        function cerrarFotoAmpliada() { modalFotoAmpliada.classList.add('hidden'); modalFotoAmpliada.classList.remove('flex'); }
+        document.getElementById('btn-ampliar-foto-equipo').addEventListener('click', () => {
+            document.getElementById('foto-ampliada').src = document.getElementById('modal-foto-equipo').src;
+            modalFotoAmpliada.classList.remove('hidden'); modalFotoAmpliada.classList.add('flex');
+        });
+        document.getElementById('btn-cerrar-foto-ampliada').addEventListener('click', cerrarFotoAmpliada);
+        modalFotoAmpliada.addEventListener('click', (e) => { if (e.target === modalFotoAmpliada) cerrarFotoAmpliada(); });
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) cerrarModalDetalle();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !modalFotoAmpliada.classList.contains('hidden')) cerrarFotoAmpliada();
+            if (e.key === 'Escape' && !modal.classList.contains('hidden')) cerrarModalDetalle();
+        });
+
+        const formularioEditarEquipo = document.getElementById('form-editar-equipo');
+        document.getElementById('btn-editar-equipo').addEventListener('click', () => {
+            const equipo = equipos.find((item) => item.id_equipo === equipoModalId);
+            if (!equipo) return;
+            for (const [campo, valor] of Object.entries({
+                nombre_equipo: equipo.nombre_equipo, marca: equipo.marca, modelo: equipo.modelo,
+                numero_serie: equipo.numero_serie, ubicacion: equipo.ubicacion, nivel_riesgo: equipo.nivel_riesgo,
+                estado: equipo.estado, tipo_categoria: equipo.tipo_categoria,
+                proximo_mto_preventivo: equipo.fecha_proximo_mto_preventivo || ''
+            })) formularioEditarEquipo.elements[campo].value = valor || '';
+            formularioEditarEquipo.classList.remove('hidden');
+            document.getElementById('editar-equipo-msg').textContent = '';
+        });
+        document.getElementById('btn-cancelar-edicion-equipo').addEventListener('click', () => formularioEditarEquipo.classList.add('hidden'));
+        formularioEditarEquipo.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const mensaje = document.getElementById('editar-equipo-msg');
+            const cambios = Object.fromEntries(new FormData(formularioEditarEquipo).entries());
+            cambios.proximo_mto_preventivo = cambios.proximo_mto_preventivo || null;
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}`, {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios)
+                });
+                const resultado = await respuesta.json();
+                if (!respuesta.ok) throw new Error(resultado.error || 'No se pudieron guardar los cambios.');
+                await cargarEquipos();
+                const equipoActualizado = equipos.find((item) => item.id_equipo === equipoModalId);
+                if (equipoActualizado) abrirModalDetalle(equipoActualizado);
+            } catch (error) {
+                mensaje.textContent = error.message || 'No se pudieron guardar los cambios.';
+                mensaje.className = 'mt-2 text-xs text-rose-700';
+            }
+        });
+        document.getElementById('btn-eliminar-equipo').addEventListener('click', async () => {
+            const equipo = equipos.find((item) => item.id_equipo === equipoModalId);
+            if (!equipo || !confirm(`¿Eliminar el equipo ${equipo.id_equipo} — ${equipo.nombre_equipo}? Esta acción no se puede deshacer.`)) return;
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}`, { method: 'DELETE' });
+                const resultado = await respuesta.json();
+                if (!respuesta.ok) throw new Error(resultado.error || 'No se pudo eliminar el equipo.');
+                cerrarModalDetalle();
+                await cargarEquipos();
+            } catch (error) { alert(error.message || 'No se pudo eliminar el equipo.'); }
+        });
+
+        // Lista de equipos que coincide con la búsqueda actual (la usan la tabla y la exportación)
+        function equiposFiltrados() {
+            const termino = normalizar(busqueda.value);
+            const estadoSeleccionado = normalizar(document.getElementById('filtro-estado').value);
+            const ubicacionSeleccionada = normalizar(document.getElementById('filtro-ubicacion').value);
+            const riesgoSeleccionado = normalizar(document.getElementById('filtro-riesgo').value);
+            return equipos.filter((equipo) => {
+                if (soloAlertasPreventivas && !['Vencido', 'Próximo'].includes(equipo.estado_mantenimiento_preventivo)) return false;
+                if (estadoSeleccionado && normalizar(equipo.estado) !== estadoSeleccionado) return false;
+                if (ubicacionSeleccionada && normalizar(equipo.ubicacion) !== ubicacionSeleccionada) return false;
+                if (riesgoSeleccionado && normalizar(equipo.nivel_riesgo) !== riesgoSeleccionado) return false;
+                const texto = [
+                    equipo.id_equipo,
+                    equipo.nombre_equipo,
+                    equipo.marca,
+                    equipo.modelo,
+                    equipo.ubicacion,
+                    equipo.estado,
+                    equipo.tipo_categoria
+                ].map(normalizar).join(' ');
+                return texto.includes(termino);
+            });
+        }
+
+        function filtrarEquipos() {
+            const filtrados = equiposFiltrados();
+            renderizarTabla(filtrados);
+            document.getElementById('info-export-inventario').textContent =
+                `Se exportarán ${filtrados.length} de ${equipos.length} equipos (según la búsqueda actual).`;
+        }
+
+        function poblarFiltroUbicacion() {
+            const select = document.getElementById('filtro-ubicacion');
+            const valorActual = select.value;
+            const ubicaciones = [...new Set(equipos.map((equipo) => equipo.ubicacion).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+            select.innerHTML = '<option value="">Todas las ubicaciones</option>' + ubicaciones.map((ubicacion) => `<option value="${escapeHtml(ubicacion)}">${escapeHtml(ubicacion)}</option>`).join('');
+            if (ubicaciones.includes(valorActual)) select.value = valorActual;
+        }
+
+        // --- PANEL PRINCIPAL: equipos que no están operativos ---
+        function renderizarAtencion() {
+            const pendientes = equipos.filter((e) => !normalizar(e.estado).includes('operativ'));
+            document.getElementById('conteo-atencion').textContent = pendientes.length
+                ? `${pendientes.length} equipos en mantenimiento o fuera de servicio. Se muestran los primeros 8.`
+                : 'Sin pendientes.';
+            document.getElementById('lista-atencion').innerHTML = pendientes.length
+                ? pendientes.slice(0, 8).map((e) => `
+                    <li class="flex items-center justify-between gap-3 py-3">
+                        <div>
+                            <p class="font-medium text-slate-900">${escapeHtml(e.nombre_equipo)}</p>
+                            <p class="text-xs text-slate-500">${escapeHtml(e.id_equipo)} en ${escapeHtml(e.ubicacion)}</p>
+                        </div>
+                        <span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${claseEstado(e.estado)}">${escapeHtml(e.estado)}</span>
+                    </li>`).join('')
+                : '<li class="py-6 text-center text-sm text-slate-500">Todos los equipos están operativos.</li>';
+        }
+
+        function actualizarGraficaEstados() {
+            if (typeof Chart === 'undefined') return;
+            const resumen = resumenEstadosDB.length
+                ? Object.fromEntries(resumenEstadosDB.map((item) => [item.estado || 'Sin estado', Number(item.cantidad)]))
+                : equipos.reduce((conteo, equipo) => {
+                const estado = equipo.estado || 'Sin estado';
+                conteo[estado] = (conteo[estado] || 0) + 1;
+                return conteo;
+            }, {});
+            const labels = Object.keys(resumen);
+            const valores = labels.map((estado) => resumen[estado]);
+            if (!graficaEstados) {
+                graficaEstados = new Chart(document.getElementById('grafica-estados'), {
+                    type: 'doughnut',
+                    data: { labels, datasets: [{ data: valores, backgroundColor: ['#0d7377', '#f59e0b', '#e11d48', '#64748b', '#8b5cf6'], borderWidth: 2, borderColor: '#fff' }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+                });
+            } else {
+                graficaEstados.data.labels = labels;
+                graficaEstados.data.datasets[0].data = valores;
+                graficaEstados.update();
+            }
+        }
+
+        async function cargarGraficas() {
+            const mensaje = document.getElementById('msg-graficas');
+            if (typeof Chart === 'undefined') {
+                mensaje.textContent = 'No se pudo cargar Chart.js. Verifica la conexión a internet para mostrar las gráficas.';
+                mensaje.classList.remove('hidden');
+                return;
+            }
+            try {
+                const respuesta = await fetchAuth('/api/analitica/dashboard');
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudieron cargar los datos de las gráficas');
+                resumenEstadosDB = datos.equiposPorEstado || [];
+                const tipos = ['Preventivo', 'Correctivo'];
+                const conteos = Object.fromEntries(datos.mantenimientosPorTipo.map((item) => [item.tipo, Number(item.cantidad)]));
+                const configBarras = {
+                    type: 'bar',
+                    data: { labels: tipos, datasets: [{ label: 'Mantenimientos', data: tipos.map((tipo) => conteos[tipo] || 0), backgroundColor: ['#0d7377', '#f59e0b'], borderRadius: 8, maxBarThickness: 90 }] },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }, plugins: { legend: { display: false } } }
+                };
+                if (graficaMantenimientos) graficaMantenimientos.destroy();
+                graficaMantenimientos = new Chart(document.getElementById('grafica-mantenimientos'), configBarras);
+                mensaje.classList.add('hidden');
+                actualizarGraficaEstados();
+            } catch (error) {
+                console.error(error);
+                mensaje.textContent = error.message || 'No se pudieron cargar las gráficas.';
+                mensaje.classList.remove('hidden');
+            }
+        }
+
+        // --- ESTADO DEL EQUIPO (mismas reglas que el servidor) ---
+        const ESTADOS = ['Operativo', 'En mantenimiento', 'Fuera de servicio'];
+        const ESTADOS_TECNICO = ['Operativo', 'En mantenimiento'];
+        let equipoModalId = null;
+
+        function estadosDisponibles(estadoActual) {
+            if (esAdmin) return ESTADOS;
+            return normalizar(estadoActual) === 'fuera de servicio' ? [] : ESTADOS_TECNICO;
+        }
+
+        function refrescarVistasEquipos() {
+            actualizarResumen(equipos);
+            filtrarEquipos();
+            renderizarAtencion();
+            actualizarGraficaEstados();
+        }
+
+        function prepararCambioEstado(equipo) {
+            const select = document.getElementById('modal-estado-select');
+            const boton = document.getElementById('btn-guardar-estado');
+            const msg = document.getElementById('modal-estado-msg');
+            const opciones = estadosDisponibles(equipo.estado);
+            msg.className = 'mt-2 text-xs text-slate-500';
+
+            if (opciones.length === 0) {
+                select.innerHTML = `<option>${escapeHtml(equipo.estado)}</option>`;
+                msg.textContent = 'Este equipo está fuera de servicio: solo un Administrador puede reactivarlo.';
+            } else {
+                select.innerHTML = opciones.map((estado) =>
+                    `<option value="${estado}" ${normalizar(estado) === normalizar(equipo.estado) ? 'selected' : ''}>${estado}</option>`).join('');
+                msg.textContent = esAdmin ? '' : 'Como Técnico puedes alternar entre Operativo y En mantenimiento. Dar de baja requiere un Administrador.';
+            }
+            select.disabled = boton.disabled = opciones.length === 0;
+        }
+
+        document.getElementById('btn-guardar-estado').addEventListener('click', async () => {
+            const boton = document.getElementById('btn-guardar-estado');
+            const msg = document.getElementById('modal-estado-msg');
+            const nuevo = document.getElementById('modal-estado-select').value;
+            const equipo = equipos.find((e) => e.id_equipo === equipoModalId);
+            if (!equipo) return;
+
+            boton.disabled = true;
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}/estado`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ estado: nuevo })
+                });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) {
+                    msg.className = 'mt-2 text-xs text-rose-700';
+                    msg.textContent = datos.error || 'No se pudo cambiar el estado.';
+                    return;
+                }
+                equipo.estado = datos.estado;   // el servidor confirma el valor final
+                refrescarVistasEquipos();       // tabla, resumen y panel principal al instante
+                cargarGraficas();
+                abrirModalDetalle(equipo);
+                const aviso = document.getElementById('modal-estado-msg');
+                aviso.className = 'mt-2 text-xs text-emerald-700';
+                aviso.textContent = `Estado actualizado a "${datos.estado}".`;
+            } catch (error) {
+                console.error(error);
+                msg.textContent = 'No se pudo conectar con el servidor.';
+            } finally {
+                prepararBotonEstado();
+            }
+        });
+
+        document.getElementById('btn-guardar-proximo-preventivo').addEventListener('click', async () => {
+            const boton = document.getElementById('btn-guardar-proximo-preventivo');
+            const mensaje = document.getElementById('modal-proximo-msg');
+            boton.disabled = true;
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}/proximo-preventivo`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fecha_proximo_mto_preventivo: document.getElementById('modal-proximo-preventivo').value || null })
+                });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudo guardar la fecha.');
+                const indice = equipos.findIndex((equipo) => equipo.id_equipo === equipoModalId);
+                if (indice !== -1) equipos[indice] = datos;
+                refrescarVistasEquipos();
+                abrirModalDetalle(datos);
+                const aviso = document.getElementById('modal-proximo-msg');
+                aviso.className = 'mt-2 text-xs text-emerald-700';
+                aviso.textContent = 'Fecha programada actualizada.';
+            } catch (error) {
+                mensaje.className = 'mt-2 text-xs text-rose-700';
+                mensaje.textContent = error.message || 'No se pudo conectar con el servidor.';
+            } finally {
+                boton.disabled = false;
+            }
+        });
+
+        function prepararBotonEstado() {
+            const equipo = equipos.find((e) => e.id_equipo === equipoModalId);
+            document.getElementById('btn-guardar-estado').disabled = !equipo || estadosDisponibles(equipo.estado).length === 0;
+        }
+
+        document.getElementById('btn-mto-desde-modal').addEventListener('click', () => {
+            document.getElementById('m_equipo').value = equipoModalId || '';
+            cerrarModalDetalle();
+            location.hash = 'mantenimiento';
+        });
+
+        document.getElementById('btn-generar-qr').addEventListener('click', async () => {
+            const boton = document.getElementById('btn-generar-qr');
+            boton.disabled = true;
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}/qr`);
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudo generar el código QR.');
+                const imagen = document.getElementById('modal-qr-equipo');
+                imagen.src = datos.qr;
+                imagen.classList.remove('hidden');
+                const enlace = document.getElementById('link-ficha-qr');
+                enlace.href = datos.url;
+                enlace.classList.remove('hidden');
+            } catch (error) {
+                alert(error.message || 'No se pudo conectar con el servidor.');
+            } finally {
+                boton.disabled = false;
+            }
+        });
+
+        document.getElementById('btn-subir-imagen-equipo').addEventListener('click', async () => {
+            const input = document.getElementById('input-imagen-equipo');
+            if (!input.files[0]) { alert('Selecciona primero una imagen JPEG, PNG o WebP.'); return; }
+            const datos = new FormData();
+            datos.append('imagen', input.files[0]);
+            try {
+                const respuesta = await fetchAuth(`${API_URL}/${encodeURIComponent(equipoModalId)}/imagen`, { method: 'POST', body: datos });
+                const resultado = await respuesta.json();
+                if (!respuesta.ok) throw new Error(resultado.error || 'No se pudo subir la imagen.');
+                const equipo = equipos.find((item) => item.id_equipo === equipoModalId);
+                if (equipo) equipo.foto_equipo = resultado.foto_equipo;
+                abrirModalDetalle(equipo);
+            } catch (error) {
+                alert(error.message || 'No se pudo conectar con el servidor.');
+            }
+        });
+
+        // --- MANTENIMIENTOS: la lista local es un espejo de la tabla del servidor ---
+        let mantenimientos = [];
+        let idResaltado = null;
+        const tablaHistorial = document.getElementById('tabla-historial');
+        const hoy = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+        const ordenarMantenimientos = () => mantenimientos.sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id_mantenimiento - a.id_mantenimiento);
+        const puedeEditarMantenimiento = (m) => esAdmin || m.id_usuario === usuario.id_usuario;
+
+        function mostrarMensaje(elemento, texto, esError) {
+            elemento.textContent = texto;
+            elemento.classList.remove('hidden');
+            elemento.className = elemento.className.replace(/text-(rose|emerald|slate)-\d+/g, '') + (esError ? ' text-rose-700' : ' text-emerald-700');
+        }
+
+        function llenarListaEquipos() {
+            document.getElementById('lista-equipos').innerHTML = equipos.map((e) =>
+                `<option value="${escapeHtml(e.id_equipo)}">${escapeHtml(e.nombre_equipo)}</option>`).join('');
+        }
+
+        async function cargarMantenimientos() {
+            try {
+                const respuesta = await fetchAuth('/api/mantenimientos');
+                if (!respuesta.ok) throw new Error('No se pudo obtener el historial');
+                mantenimientos = await respuesta.json();
+            } catch (error) {
+                console.error(error);
+                mantenimientos = [];
+                document.getElementById('nota-historial').textContent = 'No se pudo cargar el historial. ¿Ejecutaste mantenimientos.sql?';
+                return;
+            }
+            renderizarHistorial();
+        }
+
+        function filaHistorial(m) {
+            const resaltar = m.id_mantenimiento === idResaltado ? ' data-resaltar class="bg-teal-50 transition-colors duration-1000"' : '';
+            return `
+                <tr data-mantenimiento-id="${m.id_mantenimiento}" class="cursor-pointer transition-colors hover:bg-clinica-50/70" title="Toca para ver el detalle">
+                    <td class="whitespace-nowrap px-4 py-3"><span class="font-mono text-xs text-slate-600">${escapeHtml(m.fecha)}</span></td>
+                    <td class="px-4 py-3"><p class="font-medium text-slate-900">${escapeHtml(m.nombre_equipo)}</p><p class="text-xs text-slate-500">${escapeHtml(m.id_equipo)}</p></td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${m.tipo === 'Preventivo' ? 'bg-teal-100 text-teal-800 ring-teal-200' : 'bg-amber-100 text-amber-800 ring-amber-200'}">${escapeHtml(m.tipo)}</span></td>
+                    <td class="max-w-md px-4 py-3 text-slate-600"><p class="line-clamp-2" title="${escapeHtml(m.detalle)}">${escapeHtml(m.detalle)}</p></td>
+                    <td class="whitespace-nowrap px-4 py-3 text-slate-500">${escapeHtml(m.registrado_por || 'Migrado del inventario')}</td>
+                </tr>`;
+        }
+
+        // Períodos móviles que terminan hoy (incluido): 7, 30 y 365 días
+        const PERIODOS = {
+            todos:   { etiqueta: 'Todos',   detalle: 'Todos los registros', dias: null },
+            semanal: { etiqueta: 'Semanal', detalle: 'Semanal (últimos 7 días)', dias: 7 },
+            mensual: { etiqueta: 'Mensual', detalle: 'Mensual (últimos 30 días)', dias: 30 },
+            anual:   { etiqueta: 'Anual',   detalle: 'Anual (últimos 365 días)', dias: 365 }
+        };
+        const periodoHistorial = document.getElementById('periodo-historial');
+        const aFechaLarga = (iso) => iso.split('-').reverse().join('/');
+        const registrosTexto = (n) => `${n} ${n === 1 ? 'registro' : 'registros'}`;
+
+        function sumarDias(iso, dias) {
+            const f = new Date(`${iso}T00:00:00Z`);
+            f.setUTCDate(f.getUTCDate() + dias);
+            return f.toISOString().slice(0, 10);
+        }
+
+        function rangoPeriodo(clave) {
+            const { dias } = PERIODOS[clave];
+            if (!dias) return null;
+            const hasta = hoy();
+            return { desde: sumarDias(hasta, -(dias - 1)), hasta };
+        }
+
+        // Fuente única: la tabla en pantalla y los reportes usan esta misma lista
+        function mantenimientosFiltrados() {
+            const termino = normalizar(document.getElementById('busqueda-historial').value);
+            const rango = rangoPeriodo(periodoHistorial.value);
+            return mantenimientos.filter((m) =>
+                (!rango || (m.fecha >= rango.desde && m.fecha <= rango.hasta)) &&
+                (!termino || [m.id_equipo, m.nombre_equipo, m.tipo, m.detalle, m.registrado_por].map(normalizar).join(' ').includes(termino)));
+        }
+
+        function renderizarHistorial() {
+            const lista = mantenimientosFiltrados();
+            const rango = rangoPeriodo(periodoHistorial.value);
+            document.getElementById('nota-historial').textContent = mantenimientos.length
+                ? `${lista.length} de ${mantenimientos.length} mantenimientos, del más reciente al más antiguo.`
+                : 'Todavía no hay mantenimientos registrados.';
+            document.getElementById('info-export-historial').textContent = rango
+                ? `Del ${aFechaLarga(rango.desde)} al ${aFechaLarga(rango.hasta)}: se exportarán ${registrosTexto(lista.length)}.`
+                : `Se exportarán ${registrosTexto(lista.length)}.`;
+            tablaHistorial.innerHTML = lista.length
+                ? lista.map(filaHistorial).join('')
+                : '<tr><td colspan="5" class="px-4 py-10 text-center text-slate-500">No hay mantenimientos que coincidan.</td></tr>';
+        }
+
+        // Desplaza y resalta la fila recién creada/editada (solo funciona con la vista visible)
+        function resaltarFilaNueva() {
+            const fila = tablaHistorial.querySelector('[data-resaltar]');
+            if (!fila) return;
+            fila.scrollIntoView({ block: 'center' });
+            setTimeout(() => { fila.classList.remove('bg-teal-50'); idResaltado = null; }, 3500);
+        }
+
+        const modalFichaMantenimiento = document.getElementById('modal-detalle-mantenimiento');
+        let mantenimientoFichaId = null;
+        function cerrarFichaMantenimiento() {
+            modalFichaMantenimiento.classList.add('hidden');
+            modalFichaMantenimiento.classList.remove('flex');
+            document.getElementById('form-editar-mantenimiento-ficha').classList.add('hidden');
+            document.getElementById('acciones-ficha-mantenimiento').classList.remove('hidden');
+        }
+        function abrirFichaMantenimiento(registro) {
+            mantenimientoFichaId = registro.id_mantenimiento;
+            const editable = puedeEditarMantenimiento(registro);
+            document.getElementById('mantenimiento-ficha-tipo').textContent = `${registro.tipo} · ${registro.fecha}`;
+            document.getElementById('mantenimiento-ficha-datos').innerHTML = `
+                <div><p class="text-xs font-semibold uppercase text-slate-500">Equipo</p><p class="font-semibold text-slate-900">${escapeHtml(registro.nombre_equipo)} <span class="font-normal text-slate-500">(${escapeHtml(registro.id_equipo)})</span></p></div>
+                <div><p class="text-xs font-semibold uppercase text-slate-500">Detalle</p><p class="whitespace-pre-wrap text-slate-700">${escapeHtml(registro.detalle)}</p></div>
+                <div><p class="text-xs font-semibold uppercase text-slate-500">Registrado por</p><p class="text-slate-700">${escapeHtml(registro.registrado_por || 'Migrado del inventario')}</p></div>`;
+            document.getElementById('acciones-ficha-mantenimiento').classList.toggle('hidden', !editable);
+            document.getElementById('form-editar-mantenimiento-ficha').classList.add('hidden');
+            document.getElementById('mantenimiento-ficha-datos').classList.remove('hidden');
+            document.getElementById('ficha-mto-msg').textContent = '';
+            modalFichaMantenimiento.classList.remove('hidden'); modalFichaMantenimiento.classList.add('flex');
+        }
+        tablaHistorial.addEventListener('click', (e) => {
+            const fila = e.target.closest('tr[data-mantenimiento-id]');
+            if (!fila) return;
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === Number(fila.dataset.mantenimientoId));
+            if (registro) abrirFichaMantenimiento(registro);
+        });
+        document.getElementById('btn-cerrar-ficha-mantenimiento').addEventListener('click', cerrarFichaMantenimiento);
+        modalFichaMantenimiento.addEventListener('click', (e) => { if (e.target === modalFichaMantenimiento) cerrarFichaMantenimiento(); });
+        document.getElementById('btn-ver-ficha-equipo-desde-mantenimiento').addEventListener('click', () => {
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === mantenimientoFichaId);
+            const equipo = registro && equipos.find((item) => item.id_equipo === registro.id_equipo);
+            if (!equipo) { alert('No se encontró este equipo en el inventario.'); return; }
+            cerrarFichaMantenimiento();
+            abrirModalDetalle(equipo);
+        });
+        document.getElementById('btn-editar-mantenimiento-ficha').addEventListener('click', () => {
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === mantenimientoFichaId);
+            if (!registro || !puedeEditarMantenimiento(registro)) return;
+            document.getElementById('ficha-mto-fecha').value = registro.fecha;
+            document.getElementById('ficha-mto-fecha').max = hoy();
+            document.getElementById('ficha-mto-equipo').innerHTML = equipos.map((equipo) => `<option value="${escapeHtml(equipo.id_equipo)}">${escapeHtml(equipo.nombre_equipo)} (${escapeHtml(equipo.id_equipo)})</option>`).join('');
+            document.getElementById('ficha-mto-equipo').value = registro.id_equipo;
+            document.getElementById('ficha-mto-tipo').value = registro.tipo;
+            document.getElementById('ficha-mto-detalle').value = registro.detalle;
+            document.getElementById('mantenimiento-ficha-datos').classList.add('hidden');
+            document.getElementById('acciones-ficha-mantenimiento').classList.add('hidden');
+            document.getElementById('form-editar-mantenimiento-ficha').classList.remove('hidden');
+        });
+        document.getElementById('btn-cancelar-editar-mantenimiento').addEventListener('click', () => {
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === mantenimientoFichaId);
+            if (registro) abrirFichaMantenimiento(registro);
+        });
+        document.getElementById('form-editar-mantenimiento-ficha').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === mantenimientoFichaId);
+            if (!registro || !puedeEditarMantenimiento(registro)) return;
+            const cambios = { fecha: document.getElementById('ficha-mto-fecha').value, id_equipo: document.getElementById('ficha-mto-equipo').value, tipo: document.getElementById('ficha-mto-tipo').value, detalle: document.getElementById('ficha-mto-detalle').value.trim() };
+            const mensaje = document.getElementById('ficha-mto-msg');
+            if (!cambios.fecha || !cambios.id_equipo || cambios.detalle.length < 10) { mensaje.textContent = 'Completa equipo, fecha y un detalle de al menos 10 caracteres.'; return; }
+            try {
+                const respuesta = await fetchAuth(`/api/mantenimientos/${mantenimientoFichaId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios) });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudo actualizar el mantenimiento.');
+                mantenimientos = mantenimientos.map((m) => m.id_mantenimiento === mantenimientoFichaId ? datos : m);
+                ordenarMantenimientos(); idResaltado = mantenimientoFichaId; renderizarHistorial();
+                abrirFichaMantenimiento(datos); cargarGraficas();
+                mostrarMensaje(document.getElementById('msg-historial'), 'Mantenimiento actualizado correctamente.', false);
+            } catch (error) { mensaje.textContent = error.message || 'No se pudo conectar con el servidor.'; }
+        });
+        document.getElementById('btn-eliminar-mantenimiento-ficha').addEventListener('click', async () => {
+            const registro = mantenimientos.find((m) => m.id_mantenimiento === mantenimientoFichaId);
+            if (!registro || !puedeEditarMantenimiento(registro) || !confirm(`¿Eliminar el mantenimiento ${registro.tipo} del ${registro.fecha} para ${registro.id_equipo}? Esta acción no se puede deshacer.`)) return;
+            try {
+                const respuesta = await fetchAuth(`/api/mantenimientos/${mantenimientoFichaId}`, { method: 'DELETE' });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudo eliminar el mantenimiento.');
+                mantenimientos = mantenimientos.filter((m) => m.id_mantenimiento !== mantenimientoFichaId);
+                cerrarFichaMantenimiento(); renderizarHistorial(); cargarGraficas();
+                mostrarMensaje(document.getElementById('msg-historial'), 'Mantenimiento eliminado correctamente.', false);
+            } catch (error) { alert(error.message || 'No se pudo eliminar el mantenimiento.'); }
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modalFichaMantenimiento.classList.contains('hidden')) cerrarFichaMantenimiento(); });
+
+        document.getElementById('busqueda-historial').addEventListener('input', renderizarHistorial);
+        periodoHistorial.addEventListener('change', renderizarHistorial);
+
+        // Registrar un mantenimiento nuevo
+        function reiniciarFormularioMantenimiento() {
+            document.getElementById('form-mantenimiento').reset();
+            const fecha = document.getElementById('m_fecha');
+            fecha.max = fecha.value = hoy();
+        }
+
+        document.getElementById('form-mantenimiento').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const msg = document.getElementById('msg-mantenimiento');
+            const boton = document.getElementById('btn-guardar-mantenimiento');
+            const idEscrito = document.getElementById('m_equipo').value.trim();
+            const equipo = equipos.find((q) => normalizar(q.id_equipo) === normalizar(idEscrito));
+
+            if (!equipo) { mostrarMensaje(msg, 'Elige un equipo de la lista (escribe su ID, por ejemplo BIO-001).', true); return; }
+
+            boton.disabled = true;
+            try {
+                const respuesta = await fetchAuth('/api/mantenimientos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id_equipo: equipo.id_equipo,
+                        fecha: document.getElementById('m_fecha').value,
+                        tipo: document.getElementById('m_tipo').value,
+                        detalle: document.getElementById('m_detalle').value
+                    })
+                });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) { mostrarMensaje(msg, datos.error || 'No se pudo registrar el mantenimiento.', true); return; }
+
+                mantenimientos.push(datos);           // fila completa devuelta por el servidor
+                ordenarMantenimientos();
+                idResaltado = datos.id_mantenimiento;
+                document.getElementById('busqueda-historial').value = '';
+                renderizarHistorial();
+                reiniciarFormularioMantenimiento();
+                msg.textContent = '';
+                mostrarMensaje(document.getElementById('msg-historial'), `Mantenimiento registrado para ${datos.id_equipo}.`, false);
+                cargarGraficas();
+                location.hash = 'historial';          // mostrarVista() resalta la fila nueva
+            } catch (error) {
+                console.error(error);
+                mostrarMensaje(msg, 'No se pudo conectar con el servidor.', true);
+            } finally {
+                boton.disabled = false;
+            }
+        });
+
+        // Hoja de vida del modal: sale de la misma lista sincronizada
+        function renderizarHojaVida(idEquipo) {
+            const propios = mantenimientos.filter((m) => m.id_equipo === idEquipo);
+            document.getElementById('modal-hoja-vida').innerHTML = propios.length
+                ? propios.slice(0, 6).map((m) => `
+                    <li class="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white p-2.5">
+                        <span class="min-w-0 truncate"><b class="font-semibold">${escapeHtml(m.tipo)}:</b> ${escapeHtml(m.detalle)}</span>
+                        <span class="shrink-0 font-mono text-slate-400">${escapeHtml(m.fecha)}</span>
+                    </li>`).join('')
+                : '<li class="rounded-lg border border-slate-100 bg-white p-2.5 text-slate-500">Sin mantenimientos registrados.</li>';
+        }
+
+        // --- EXPORTACIÓN DE REPORTES (PDF y Excel) ---
+        // Las librerías se descargan del CDN solo la primera vez que se usan.
+        const LIBRERIAS = {
+            pdf: [
+                'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js'
+            ],
+            excel: ['https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js']
+        };
+        const libreriasCargadas = {};
+
+        function cargarScript(url) {
+            return new Promise((resolver, rechazar) => {
+                const script = document.createElement('script');
+                script.src = url;
+                script.onload = resolver;
+                script.onerror = () => rechazar(new Error(`No se pudo cargar ${url}`));
+                document.head.appendChild(script);
+            });
+        }
+
+        function cargarLibreria(clave) {
+            if (!libreriasCargadas[clave]) {
+                libreriasCargadas[clave] = (async () => {
+                    for (const url of LIBRERIAS[clave]) await cargarScript(url); // en orden: autotable necesita jsPDF
+                })().catch((error) => { delete libreriasCargadas[clave]; throw error; });
+            }
+            return libreriasCargadas[clave];
+        }
+
+        const COLUMNAS_INVENTARIO = [
+            { titulo: 'ID', valor: (e) => e.id_equipo },
+            { titulo: 'Equipo', valor: (e) => e.nombre_equipo },
+            { titulo: 'Marca', valor: (e) => e.marca },
+            { titulo: 'Modelo', valor: (e) => e.modelo },
+            { titulo: 'N.° de serie', valor: (e) => e.numero_serie },
+            { titulo: 'Categoría', valor: (e) => e.tipo_categoria },
+            { titulo: 'Ubicación', valor: (e) => e.ubicacion },
+            { titulo: 'Nivel de riesgo', valor: (e) => e.nivel_riesgo },
+            { titulo: 'Estado', valor: (e) => e.estado }
+        ];
+        const COLUMNAS_HISTORIAL = [
+            { titulo: 'Fecha', valor: (m) => m.fecha },
+            { titulo: 'ID equipo', valor: (m) => m.id_equipo },
+            { titulo: 'Equipo', valor: (m) => m.nombre_equipo },
+            { titulo: 'Tipo', valor: (m) => m.tipo },
+            { titulo: 'Detalle', valor: (m) => m.detalle },
+            { titulo: 'Registrado por', valor: (m) => m.registrado_por || 'Migrado del inventario' }
+        ];
+        // Anchos fijos (pt) en el PDF; las columnas sin ancho se reparten el resto
+        const ANCHOS_PDF = {
+            inventario: {},
+            historial: { 0: { cellWidth: 62 }, 1: { cellWidth: 58 }, 2: { cellWidth: 130 }, 3: { cellWidth: 58 }, 5: { cellWidth: 100 } }
+        };
+        const ESTILOS_AVISO = {
+            ok: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+            aviso: 'border-amber-200 bg-amber-50 text-amber-800',
+            error: 'border-rose-200 bg-rose-50 text-rose-800'
+        };
+
+        function mostrarAviso(elemento, texto, tipo) {
+            elemento.textContent = texto;
+            elemento.className = `w-full rounded-xl border px-3.5 py-2.5 text-sm ${ESTILOS_AVISO[tipo]}`;
+            clearTimeout(elemento.temporizador);
+            elemento.temporizador = setTimeout(() => elemento.classList.add('hidden'), 7000);
+        }
+
+        // Arma todo lo que necesita un reporte a partir de lo que hay filtrado AHORA en pantalla
+        function prepararReporte(tipo) {
+            const generado = new Date();
+            const comun = {
+                tipo,
+                fechaGeneracion: generado.toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' }),
+                generadoPor: `${usuario.nombre} (${esAdmin ? 'Administrador' : 'Técnico'})`,
+                sello: hoy()
+            };
+
+            if (tipo === 'inventario') {
+                const filas = equiposFiltrados();
+                const termino = busqueda.value.trim();
+                return {
+                    ...comun, filas, columnas: COLUMNAS_INVENTARIO,
+                    titulo: 'Reporte de Inventario de Equipos',
+                    nombreBase: `BioMant_Inventario_${comun.sello}`,
+                    hoja: 'Inventario',
+                    meta: [
+                        ['Período', `Inventario vigente al ${aFechaLarga(comun.sello)}`],
+                        ['Alcance', `${filas.length} de ${equipos.length} equipos`],
+                        ...(termino ? [['Búsqueda', `"${termino}"`]] : [])
+                    ],
+                    aviso: document.getElementById('msg-export-inventario'),
+                    vacio: 'No hay equipos que coincidan con la búsqueda actual, así que no hay nada que exportar.'
+                };
+            }
+
+            const filas = mantenimientosFiltrados();
+            const clave = periodoHistorial.value;
+            const periodo = PERIODOS[clave];
+            const rango = rangoPeriodo(clave);
+            const termino = document.getElementById('busqueda-historial').value.trim();
+            const fechas = filas.map((m) => m.fecha).sort();
+            const rangoTexto = rango
+                ? `${aFechaLarga(rango.desde)} al ${aFechaLarga(rango.hasta)}`
+                : (fechas.length ? `${aFechaLarga(fechas[0])} al ${aFechaLarga(fechas[fechas.length - 1])}` : 'Sin registros');
+            return {
+                ...comun, filas, columnas: COLUMNAS_HISTORIAL,
+                titulo: 'Reporte de Historial de Mantenimientos',
+                nombreBase: `BioMant_Historial_${periodo.etiqueta}_${comun.sello}`,
+                hoja: 'Historial',
+                meta: [
+                    ['Período', periodo.detalle],
+                    ['Rango de fechas', rangoTexto],
+                    ...(termino ? [['Búsqueda', `"${termino}"`]] : [])
+                ],
+                aviso: document.getElementById('msg-export-historial'),
+                vacio: `No hay mantenimientos en el período seleccionado (${periodo.detalle}${rango ? `: ${rangoTexto}` : ''})` +
+                       `${termino ? ' con la búsqueda actual' : ''}. Prueba con otro período.`
+            };
+        }
+
+        function datosTabla(reporte) {
+            return reporte.filas.map((fila) => reporte.columnas.map((c) => String(c.valor(fila) ?? '')));
+        }
+
+        async function generarPDF(reporte) {
+            await cargarLibreria('pdf');
+            const doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+            const ancho = doc.internal.pageSize.getWidth();
+            const alto = doc.internal.pageSize.getHeight();
+
+            // Membrete institucional
+            doc.setFillColor(11, 44, 45);
+            doc.rect(0, 0, ancho, 66, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(17);
+            doc.text('CMMS BioMant - Clínica de los Ríos', 40, 31);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(10.5);
+            doc.setTextColor(153, 246, 228);
+            doc.text(reporte.titulo, 40, 50);
+
+            // Datos del reporte en dos columnas
+            const derecha = [
+                ['Fecha de generación', reporte.fechaGeneracion],
+                ['Generado por', reporte.generadoPor],
+                ['Total de registros', String(reporte.filas.length)]
+            ];
+            doc.setFontSize(10);
+            const imprimirLineas = (lineas, x) => lineas.forEach(([etiqueta, valor], i) => {
+                const y = 92 + i * 15;
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(15, 61, 62);
+                doc.text(`${etiqueta}:`, x, y);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(51, 65, 85);
+                doc.text(String(valor), x + doc.getTextWidth(`${etiqueta}: `) + 2, y);
+            });
+            imprimirLineas(reporte.meta, 40);
+            imprimirLineas(derecha, ancho / 2 + 20);
+
+            doc.autoTable({
+                startY: 92 + Math.max(reporte.meta.length, derecha.length) * 15 + 8,
+                head: [reporte.columnas.map((c) => c.titulo)],
+                body: datosTabla(reporte),
+                theme: 'grid',
+                margin: { left: 40, right: 40, bottom: 42 },
+                styles: { font: 'helvetica', fontSize: 8, cellPadding: 4, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.5, overflow: 'linebreak', valign: 'middle' },
+                headStyles: { fillColor: [10, 92, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
+                alternateRowStyles: { fillColor: [248, 250, 252] },
+                columnStyles: ANCHOS_PDF[reporte.tipo]
+            });
+
+            // Pie de página con numeración, una vez que se conoce el total de páginas
+            const total = doc.getNumberOfPages();
+            for (let i = 1; i <= total; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setTextColor(100, 116, 139);
+                doc.text('CMMS BioMant - Clínica de los Ríos', 40, alto - 20);
+                doc.text(`Página ${i} de ${total}`, ancho - 40, alto - 20, { align: 'right' });
+            }
+            doc.save(`${reporte.nombreBase}.pdf`);
+            return `${reporte.nombreBase}.pdf`;
+        }
+
+        function descargarArchivo(contenido, nombre, tipoMime) {
+            const url = URL.createObjectURL(new Blob([contenido], { type: tipoMime }));
+            const enlace = Object.assign(document.createElement('a'), { href: url, download: nombre });
+            document.body.appendChild(enlace);
+            enlace.click();
+            enlace.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        // CSV con BOM y ";" como separador: Excel en español lo abre con tildes y columnas correctas
+        function generarCSV(reporte) {
+            const celda = (valor) => `"${String(valor).replace(/"/g, '""')}"`;
+            const lineas = [reporte.columnas.map((c) => c.titulo), ...datosTabla(reporte)].map((fila) => fila.map(celda).join(';'));
+            descargarArchivo('\uFEFF' + lineas.join('\r\n'), `${reporte.nombreBase}.csv`, 'text/csv;charset=utf-8');
+            return `${reporte.nombreBase}.csv`;
+        }
+
+        async function generarExcel(reporte) {
+            try {
+                await cargarLibreria('excel');
+            } catch (error) {
+                console.error(error);
+                return { archivo: generarCSV(reporte), nota: ' No se pudo cargar la librería de Excel, así que se descargó un CSV que Excel también abre.' };
+            }
+            const datos = datosTabla(reporte);
+            const hoja = XLSX.utils.aoa_to_sheet([reporte.columnas.map((c) => c.titulo), ...datos]);
+            hoja['!cols'] = reporte.columnas.map((c, i) => ({ wch: Math.min(60, Math.max(c.titulo.length, ...datos.map((fila) => fila[i].length)) + 2) }));
+            hoja['!autofilter'] = { ref: hoja['!ref'] };
+
+            const resumen = XLSX.utils.aoa_to_sheet([
+                ['Reporte', reporte.titulo],
+                ['Institución', 'CMMS BioMant - Clínica de los Ríos'],
+                ...reporte.meta,
+                ['Fecha de generación', reporte.fechaGeneracion],
+                ['Generado por', reporte.generadoPor],
+                ['Total de registros', reporte.filas.length]
+            ]);
+            resumen['!cols'] = [{ wch: 22 }, { wch: 52 }];
+
+            const libro = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(libro, hoja, reporte.hoja);
+            XLSX.utils.book_append_sheet(libro, resumen, 'Resumen');
+            XLSX.writeFile(libro, `${reporte.nombreBase}.xlsx`);
+            return { archivo: `${reporte.nombreBase}.xlsx`, nota: '' };
+        }
+
+        async function exportar(boton) {
+            const reporte = prepararReporte(boton.dataset.reporte);
+            if (reporte.filas.length === 0) {
+                mostrarAviso(reporte.aviso, reporte.vacio, 'aviso');
+                return;
+            }
+            boton.disabled = true;
+            try {
+                if (boton.dataset.exportar === 'pdf') {
+                    const archivo = await generarPDF(reporte);
+                    mostrarAviso(reporte.aviso, `Reporte generado: ${archivo} (${registrosTexto(reporte.filas.length)}).`, 'ok');
+                } else {
+                    const { archivo, nota } = await generarExcel(reporte);
+                    mostrarAviso(reporte.aviso, `Reporte generado: ${archivo} (${registrosTexto(reporte.filas.length)}).${nota}`, nota ? 'aviso' : 'ok');
+                }
+            } catch (error) {
+                console.error(error);
+                const sinLibreria = String(error.message).startsWith('No se pudo cargar');
+                mostrarAviso(reporte.aviso, sinLibreria
+                    ? 'No se pudo cargar la librería de PDF. Verifica tu conexión a internet e inténtalo de nuevo.'
+                    : 'No se pudo generar el reporte. Inténtalo de nuevo.', 'error');
+            } finally {
+                boton.disabled = false;
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const boton = e.target.closest('[data-exportar]');
+            if (boton) exportar(boton);
+        });
+
+        // --- USUARIOS Y ROLES (solo Administrador) ---
+        async function cargarUsuarios() {
+            const cuerpo = document.getElementById('tabla-usuarios');
+            try {
+                const respuesta = await fetchAuth('/api/usuarios');
+                if (!respuesta.ok) throw new Error('Sin acceso');
+                const lista = await respuesta.json();
+                cuerpo.innerHTML = lista.map((u) => `
+                    <tr>
+                        <td class="px-4 py-3 font-medium text-slate-900">${escapeHtml(u.nombre)}</td>
+                        <td class="px-4 py-3">${escapeHtml(u.correo)}</td>
+                        <td class="px-4 py-3">${u.rol === 'Tecnico' ? 'Técnico' : escapeHtml(u.rol)}</td>
+                        <td class="px-4 py-3">${Number(u.id_usuario) === Number(usuario.id_usuario)
+                            ? '<span class="text-xs text-slate-400">Cuenta actual</span>'
+                            : `<button type="button" data-eliminar-usuario="${Number(u.id_usuario)}" data-nombre-usuario="${escapeHtml(u.nombre)}" class="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50">Eliminar</button>`}</td>
+                    </tr>`).join('');
+            } catch (error) {
+                cuerpo.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">No se pudo cargar la lista de usuarios.</td></tr>';
+            }
+        }
+
+        document.getElementById('tabla-usuarios').addEventListener('click', async (e) => {
+            const boton = e.target.closest('[data-eliminar-usuario]');
+            if (!boton) return;
+            const id = boton.dataset.eliminarUsuario;
+            const nombre = boton.dataset.nombreUsuario;
+            if (!confirm(`¿Eliminar al usuario ${nombre}? Esta acción no se puede deshacer.`)) return;
+            boton.disabled = true;
+            try {
+                const respuesta = await fetchAuth(`/api/usuarios/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                const resultado = await respuesta.json();
+                const mensaje = document.getElementById('msg-usuario');
+                mensaje.className = `text-sm ${respuesta.ok ? 'text-emerald-700' : 'text-rose-700'}`;
+                mensaje.textContent = respuesta.ok ? 'Usuario eliminado correctamente.' : (resultado.error || 'No se pudo eliminar el usuario.');
+                if (respuesta.ok) await cargarUsuarios();
+            } catch (error) {
+                boton.disabled = false;
+                const mensaje = document.getElementById('msg-usuario');
+                mensaje.className = 'text-sm text-rose-700';
+                mensaje.textContent = error.message || 'No se pudo conectar con el servidor.';
+            }
+        });
+
+        document.getElementById('form-nuevo-usuario').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const mensaje = document.getElementById('msg-usuario');
+            const datos = {
+                nombre: document.getElementById('u_nombre').value,
+                correo: document.getElementById('u_correo').value,
+                password: document.getElementById('u_password').value,
+                rol: document.getElementById('u_rol').value
+            };
+            try {
+                const respuesta = await fetchAuth('/api/usuarios', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datos)
+                });
+                const resultado = await respuesta.json();
+                mensaje.className = 'text-sm ' + (respuesta.ok ? 'text-emerald-700' : 'text-rose-700');
+                mensaje.textContent = respuesta.ok ? 'Usuario registrado correctamente.' : (resultado.error || 'No se pudo registrar el usuario.');
+                if (respuesta.ok) {
+                    e.target.reset();
+                    cargarUsuarios();
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        });
+
+        async function cargarEquipos() {
+            estadoCarga.textContent = 'Cargando inventario…';
+            try {
+                const respuesta = await fetchAuth(API_URL);
+                if (!respuesta.ok) {
+                    throw new Error('No se pudo obtener el inventario');
+                }
+                equipos = await respuesta.json();
+                poblarFiltroUbicacion();
+                actualizarResumen(equipos);
+                filtrarEquipos();
+                renderizarAtencion();
+                llenarListaEquipos();
+                estadoCarga.textContent = `${equipos.length} equipos registrados en la base de datos biomant.`;
+                await cargarGraficas();
+                if (!fichaQRAbierta) {
+                    const idQR = new URLSearchParams(location.search).get('equipo');
+                    const equipoQR = equipos.find((equipo) => equipo.id_equipo === idQR);
+                    if (equipoQR) {
+                        fichaQRAbierta = true;
+                        abrirModalDetalle(equipoQR);
+                        history.replaceState(null, '', `${location.pathname}${location.hash}`);
+                    }
+                }
+            } catch (error) {
+                console.error(error);
+                equipos = [];
+                actualizarResumen([]);
+                renderizarTabla([]);
+                renderizarAtencion();
+                llenarListaEquipos();
+                estadoCarga.textContent = 'No se pudo conectar con la API. Verifique que el servidor esté en http://localhost:3000.';
+            }
+        }
+
+        // Función para manejar el envío del formulario
+        document.getElementById('form-nuevo-equipo').addEventListener('submit', async (e) => {
+            e.preventDefault(); // Evita que la página se recargue
+
+            const datos = {
+                id_equipo: document.getElementById('id_equipo').value,
+                nombre_equipo: document.getElementById('nombre_equipo').value,
+                marca: document.getElementById('marca').value,
+                modelo: document.getElementById('modelo').value,
+                numero_serie: document.getElementById('numero_serie').value,
+                nivel_riesgo: document.getElementById('nivel_riesgo').value,
+                ubicacion: document.getElementById('ubicacion').value,
+                estado: document.getElementById('estado').value,
+                tipo_categoria: document.getElementById('tipo_categoria').value,
+                proximo_mto_preventivo: document.getElementById('proximo_mto_preventivo').value || null
+            };
+
+            try {
+                const respuesta = await fetchAuth(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(datos)
+                });
+
+                if (respuesta.ok) {
+                    alert('Equipo registrado exitosamente');
+                    document.getElementById('form-nuevo-equipo').reset(); // Limpia el formulario
+                    await cargarEquipos();
+                    location.hash = 'inventario'; // el formulario vive en su propia vista
+                } else {
+                    const error = await respuesta.json();
+                    alert(`Error: ${error.error}`);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('No se pudo conectar con el servidor.');
+            }
+        });
+
+        document.getElementById('form-importar-inventario').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const archivo = document.getElementById('archivo-inventario').files[0];
+            const mensaje = document.getElementById('msg-importar-inventario');
+            const listaErrores = document.getElementById('errores-importacion');
+            const boton = document.getElementById('btn-importar-inventario');
+            if (!archivo) return;
+            boton.disabled = true;
+            boton.textContent = 'Importando…';
+            mensaje.className = 'mt-3 text-sm text-slate-600';
+            mensaje.textContent = 'Leyendo archivo y validando registros…';
+            listaErrores.innerHTML = '';
+            try {
+                const formData = new FormData();
+                formData.append('archivo', archivo);
+                const respuesta = await fetchAuth(`${API_URL}/importar`, { method: 'POST', body: formData });
+                const datos = await respuesta.json();
+                if (!respuesta.ok) throw new Error(datos.error || 'No se pudo importar el archivo.');
+                mensaje.className = 'mt-3 text-sm text-emerald-700';
+                mensaje.textContent = `Importación finalizada: ${datos.insertados} agregados, ${datos.duplicados} IDs duplicados omitidos, ${datos.rechazados} filas rechazadas.`;
+                listaErrores.innerHTML = (datos.errores || []).map((fila) => `<li>Fila ${escapeHtml(fila.fila)}: ${escapeHtml(fila.error)}</li>`).join('');
+                await cargarEquipos();
+            } catch (error) {
+                mensaje.className = 'mt-3 text-sm text-rose-700';
+                mensaje.textContent = error.message || 'No se pudo conectar con el servidor.';
+            } finally {
+                boton.disabled = false;
+                boton.textContent = 'Importar archivo';
+            }
+        });
+
+        busqueda.addEventListener('input', filtrarEquipos);
+        ['filtro-estado', 'filtro-ubicacion', 'filtro-riesgo'].forEach((id) => document.getElementById(id).addEventListener('change', filtrarEquipos));
+        document.getElementById('btn-solo-alertas').addEventListener('click', (e) => {
+            soloAlertasPreventivas = !soloAlertasPreventivas;
+            e.currentTarget.setAttribute('aria-pressed', String(soloAlertasPreventivas));
+            e.currentTarget.classList.toggle('bg-amber-200', soloAlertasPreventivas);
+            filtrarEquipos();
+        });
+        document.getElementById('btn-actualizar').addEventListener('click', cargarEquipos);
+        pintarUsuario();
+        alternarSidebar(esEscritorio.matches); // abierto en escritorio, cerrado en móvil
+        reiniciarFormularioMantenimiento();
+        mostrarVista();
+        cargarEquipos();
+        cargarMantenimientos();
+        // Activa las animaciones solo después de pintar el estado inicial
+        requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('sin-anim')));
+    </script>
+</body>
+</html>
